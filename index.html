@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>게시판</title>
+<style>
+  body { font-family: sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; color: #222; }
+  h1 { font-size: 1.5rem; cursor: pointer; }
+  h1 span { font-size: 0.9rem; color: #888; font-weight: normal; }
+  .toolbar { display: flex; justify-content: flex-end; margin-bottom: 12px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid #e5e5e5; }
+  th { color: #666; font-size: 0.85em; font-weight: normal; }
+  td.title { cursor: pointer; }
+  td.title:hover { text-decoration: underline; }
+  td.meta, th.meta { text-align: center; width: 70px; white-space: nowrap; }
+  button { padding: 8px 14px; cursor: pointer; }
+  input[type=text], input[type=password], textarea {
+    width: 100%; padding: 8px; box-sizing: border-box; margin-bottom: 10px; font-family: inherit; font-size: 1em;
+  }
+  textarea { min-height: 200px; resize: vertical; }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  .actions { display: flex; gap: 8px; margin-top: 16px; }
+  .error { color: #c00; }
+  .status { color: #666; font-size: 0.9em; min-height: 1.2em; margin: 8px 0; }
+  #config-warning { background: #fff3cd; padding: 10px; border-radius: 4px; margin-bottom: 16px; }
+  .post-meta { color: #888; font-size: 0.9em; margin-bottom: 16px; }
+  .post-content { white-space: pre-wrap; line-height: 1.6; margin-bottom: 24px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+
+<h1 id="home-link">게시판 <span>(구글 시트 저장)</span></h1>
+<div id="config-warning"></div>
+<div id="status" class="status"></div>
+
+<!-- 목록 화면 -->
+<section id="view-list">
+  <div class="toolbar">
+    <button id="write-btn">글쓰기</button>
+  </div>
+  <table>
+    <thead>
+      <tr><th>제목</th><th class="meta">작성자</th><th class="meta">조회</th></tr>
+    </thead>
+    <tbody id="post-list"></tbody>
+  </table>
+</section>
+
+<!-- 글쓰기/수정 화면 -->
+<section id="view-form" hidden>
+  <h2 id="form-title">글쓰기</h2>
+  <input type="text" id="f-title" placeholder="제목" required>
+  <div class="row">
+    <input type="text" id="f-author" placeholder="작성자">
+    <input type="password" id="f-password" placeholder="비밀번호">
+  </div>
+  <textarea id="f-content" placeholder="내용을 입력하세요"></textarea>
+  <div class="actions">
+    <button id="f-submit">등록</button>
+    <button id="f-cancel">취소</button>
+  </div>
+</section>
+
+<!-- 상세 화면 -->
+<section id="view-detail" hidden>
+  <h2 id="d-title"></h2>
+  <div class="post-meta" id="d-meta"></div>
+  <div class="post-content" id="d-content"></div>
+  <div class="actions">
+    <button id="d-edit">수정</button>
+    <button id="d-delete">삭제</button>
+    <button id="d-back">목록으로</button>
+  </div>
+</section>
+
+<script>
+  // 1. Apps Script 배포 후 나온 웹 앱 URL을 아래에 붙여넣으세요.
+  const API_URL = 'https://script.google.com/macros/s/AKfycbyEK6x0sjL-POudD2JX3PF0W1R6HGDPr4VsG2SZ--W2NcugLJ_TS-cxPXyou87Cdpnu/exec';
+
+  const el = (id) => document.getElementById(id);
+  const status = el('status');
+  const warning = el('config-warning');
+
+  const viewList = el('view-list');
+  const viewForm = el('view-form');
+  const viewDetail = el('view-detail');
+
+  let editingId = null; // 글쓰기 화면이 '수정 모드'일 때 대상 글 ID
+
+  if (API_URL.includes('YOUR_DEPLOYED_WEB_APP_URL_HERE')) {
+    warning.textContent = 'API_URL이 설정되지 않았습니다. index.html의 API_URL 값을 배포된 Apps Script URL로 바꿔주세요.';
+  } else {
+    warning.remove();
+  }
+
+  function showView(view) {
+    viewList.hidden = view !== 'list';
+    viewForm.hidden = view !== 'form';
+    viewDetail.hidden = view !== 'detail';
+  }
+
+  function setStatus(msg, isError) {
+    status.textContent = msg || '';
+    status.className = 'status' + (isError ? ' error' : '');
+  }
+
+  function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str == null ? '' : String(str);
+    return div.innerHTML;
+  }
+
+  function fmtDate(v) {
+    const d = new Date(v);
+    if (isNaN(d)) return '';
+    return d.getFullYear() + '.' + String(d.getMonth() + 1).padStart(2, '0') + '.' + String(d.getDate()).padStart(2, '0');
+  }
+
+  // ---- 라우팅: URL 해시로 화면 전환 (#, #write, #post/ID, #edit/ID) ----
+  function route() {
+    const hash = location.hash.slice(1);
+    if (hash === 'write') {
+      openForm(null);
+    } else if (hash.startsWith('edit/')) {
+      openEditFromDetailCache(hash.slice(5));
+    } else if (hash.startsWith('post/')) {
+      openDetail(hash.slice(5));
+    } else {
+      showView('list');
+      loadList();
+    }
+  }
+  window.addEventListener('hashchange', route);
+  el('home-link').onclick = () => { location.hash = ''; };
+
+  // ---- 목록 ----
+  function loadList() {
+    setStatus('불러오는 중...');
+    fetch(API_URL)
+      .then(res => res.json())
+      .then(data => {
+        setStatus('');
+        if (!data.success) throw new Error(data.error);
+        renderList(data.posts);
+      })
+      .catch(err => setStatus('오류: ' + err.message, true));
+  }
+
+  function renderList(posts) {
+    const tbody = el('post-list');
+    tbody.innerHTML = '';
+    if (posts.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:#999;">게시글이 없습니다.</td></tr>';
+      return;
+    }
+    posts.forEach(p => {
+      const tr = document.createElement('tr');
+      tr.innerHTML =
+        '<td class="title">' + escapeHtml(p.Title) + '</td>' +
+        '<td class="meta">' + escapeHtml(p.Author) + '</td>' +
+        '<td class="meta">' + escapeHtml(p.Views) + '</td>';
+      tr.querySelector('.title').onclick = () => { location.hash = 'post/' + p.ID; };
+      tbody.appendChild(tr);
+    });
+  }
+
+  el('write-btn').onclick = () => { location.hash = 'write'; };
+
+  // ---- 글쓰기 / 수정 ----
+  function openForm(post) {
+    editingId = post ? post.ID : null;
+    el('form-title').textContent = post ? '글 수정' : '글쓰기';
+    el('f-title').value = post ? post.Title : '';
+    el('f-author').value = post ? post.Author : '';
+    el('f-content').value = post ? post.Content : '';
+    el('f-password').value = '';
+    el('f-password').placeholder = post ? '비밀번호 (수정 확인용)' : '비밀번호 (수정/삭제 시 필요)';
+    el('f-submit').textContent = post ? '수정 완료' : '등록';
+    showView('form');
+  }
+
+  let detailCache = null; // 방금 본 상세 글 (수정 화면 진입 시 재사용)
+  function openEditFromDetailCache(id) {
+    if (detailCache && detailCache.ID === id) {
+      openForm(detailCache);
+    } else {
+      // 상세를 거치지 않고 바로 접근한 경우, 먼저 상세를 불러온다.
+      fetch(API_URL + '?id=' + encodeURIComponent(id))
+        .then(res => res.json())
+        .then(data => {
+          if (!data.success) throw new Error(data.error);
+          detailCache = data.post;
+          openForm(data.post);
+        })
+        .catch(err => setStatus('오류: ' + err.message, true));
+    }
+  }
+
+  el('f-cancel').onclick = () => { history.back(); };
+
+  el('f-submit').onclick = () => {
+    const title = el('f-title').value.trim();
+    const author = el('f-author').value.trim();
+    const password = el('f-password').value;
+    const content = el('f-content').value;
+
+    if (!title) { setStatus('제목을 입력하세요.', true); return; }
+    if (!password) { setStatus('비밀번호를 입력하세요.', true); return; }
+
+    const payload = editingId
+      ? { action: 'update', id: editingId, title, content, password }
+      : { action: 'create', title, content, author: author || '익명', password };
+
+    if (!editingId && !author) {
+      // 작성자 미입력 시 '익명' 처리 안내
+      setStatus('작성자를 입력하지 않아 "익명"으로 등록됩니다.');
+    }
+
+    postAction(payload).then((data) => {
+      const targetId = editingId || data.id;
+      location.hash = 'post/' + targetId;
+    });
+  };
+
+  // ---- 상세 ----
+  function openDetail(id) {
+    setStatus('불러오는 중...');
+    fetch(API_URL + '?id=' + encodeURIComponent(id))
+      .then(res => res.json())
+      .then(data => {
+        setStatus('');
+        if (!data.success) throw new Error(data.error);
+        detailCache = data.post;
+        renderDetail(data.post);
+        showView('detail');
+      })
+      .catch(err => setStatus('오류: ' + err.message, true));
+  }
+
+  function renderDetail(post) {
+    el('d-title').textContent = post.Title;
+    el('d-meta').textContent =
+      (post.Author || '익명') + ' · ' + fmtDate(post.CreatedAt) + ' · 조회 ' + post.Views;
+    el('d-content').textContent = post.Content || '';
+    el('d-edit').onclick = () => { location.hash = 'edit/' + post.ID; };
+    el('d-delete').onclick = () => deletePost(post.ID);
+  }
+
+  el('d-back').onclick = () => { location.hash = ''; };
+
+  function deletePost(id) {
+    const password = prompt('삭제하려면 비밀번호를 입력하세요.');
+    if (password === null) return;
+    postAction({ action: 'delete', id, password }).then(() => {
+      location.hash = '';
+    });
+  }
+
+  // ---- 공통 POST 요청 ----
+  function postAction(payload) {
+    setStatus('처리 중...');
+    // Content-Type을 지정하지 않아야 브라우저의 CORS preflight를 피할 수 있습니다.
+    return fetch(API_URL, { method: 'POST', body: JSON.stringify(payload) })
+      .then(res => res.json())
+      .then(data => {
+        setStatus('');
+        if (!data.success) throw new Error(data.error || '실패');
+        return data;
+      })
+      .catch(err => {
+        setStatus('오류: ' + err.message, true);
+        throw err;
+      });
+  }
+
+  route();
+</script>
+</body>
+</html>
