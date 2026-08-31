@@ -5,18 +5,22 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>게시판</title>
 <style>
-  body { font-family: sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; color: #222; }
+  body { font-family: sans-serif; max-width: 760px; margin: 40px auto; padding: 0 16px; color: #222; }
   h1 { font-size: 1.5rem; cursor: pointer; }
   h1 span { font-size: 0.9rem; color: #888; font-weight: normal; }
-  .toolbar { display: flex; justify-content: flex-end; margin-bottom: 12px; }
+  .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .filters { display: flex; gap: 8px; flex: 1; }
+  .filters select { padding: 8px; }
+  .filters input[type=text] { flex: 1; padding: 8px; min-width: 120px; }
   table { width: 100%; border-collapse: collapse; }
   th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid #e5e5e5; }
   th { color: #666; font-size: 0.85em; font-weight: normal; }
   td.title { cursor: pointer; }
   td.title:hover { text-decoration: underline; }
   td.meta, th.meta { text-align: center; width: 70px; white-space: nowrap; }
+  .badge { display: inline-block; font-size: 0.75em; color: #567; background: #eef2f7; padding: 2px 7px; border-radius: 10px; margin-right: 6px; }
   button { padding: 8px 14px; cursor: pointer; }
-  input[type=text], input[type=password], textarea {
+  input[type=text], input[type=password], input[type=file], textarea, select {
     width: 100%; padding: 8px; box-sizing: border-box; margin-bottom: 10px; font-family: inherit; font-size: 1em;
   }
   textarea { min-height: 200px; resize: vertical; }
@@ -27,7 +31,16 @@
   .status { color: #666; font-size: 0.9em; min-height: 1.2em; margin: 8px 0; }
   #config-warning { background: #fff3cd; padding: 10px; border-radius: 4px; margin-bottom: 16px; }
   .post-meta { color: #888; font-size: 0.9em; margin-bottom: 16px; }
-  .post-content { white-space: pre-wrap; line-height: 1.6; margin-bottom: 24px; }
+  .post-content { white-space: pre-wrap; line-height: 1.6; margin-bottom: 16px; }
+  .post-image { max-width: 100%; border-radius: 6px; margin-bottom: 16px; display: block; }
+  .pagination { display: flex; justify-content: center; align-items: center; gap: 12px; margin-top: 16px; }
+  .comments { margin-top: 28px; border-top: 1px solid #e5e5e5; padding-top: 16px; }
+  .comment { border-bottom: 1px solid #eee; padding: 10px 0; }
+  .comment-head { display: flex; justify-content: space-between; font-size: 0.9em; color: #555; }
+  .comment-head button { padding: 2px 8px; font-size: 0.8em; }
+  .comment-body { margin-top: 4px; white-space: pre-wrap; }
+  .comment-form { margin-top: 16px; }
+  .img-preview { max-width: 200px; display: block; margin-bottom: 8px; }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -40,6 +53,11 @@
 <!-- 목록 화면 -->
 <section id="view-list">
   <div class="toolbar">
+    <div class="filters">
+      <select id="filter-category"><option value="">전체 카테고리</option></select>
+      <input type="text" id="filter-q" placeholder="검색어 입력">
+      <button id="filter-search-btn">검색</button>
+    </div>
     <button id="write-btn">글쓰기</button>
   </div>
   <table>
@@ -48,6 +66,11 @@
     </thead>
     <tbody id="post-list"></tbody>
   </table>
+  <div class="pagination">
+    <button id="page-prev">이전</button>
+    <span id="page-info"></span>
+    <button id="page-next">다음</button>
+  </div>
 </section>
 
 <!-- 글쓰기/수정 화면 -->
@@ -58,7 +81,14 @@
     <input type="text" id="f-author" placeholder="작성자">
     <input type="password" id="f-password" placeholder="비밀번호">
   </div>
+  <input type="text" id="f-category" list="category-options" placeholder="카테고리 (예: 자유, 질문, 공지)">
+  <datalist id="category-options"></datalist>
   <textarea id="f-content" placeholder="내용을 입력하세요"></textarea>
+  <div id="f-image-current" hidden>
+    <img id="f-image-preview" class="img-preview">
+    <label><input type="checkbox" id="f-remove-image"> 기존 이미지 삭제</label>
+  </div>
+  <input type="file" id="f-image" accept="image/*">
   <div class="actions">
     <button id="f-submit">등록</button>
     <button id="f-cancel">취소</button>
@@ -69,17 +99,33 @@
 <section id="view-detail" hidden>
   <h2 id="d-title"></h2>
   <div class="post-meta" id="d-meta"></div>
+  <img id="d-image" class="post-image" hidden>
   <div class="post-content" id="d-content"></div>
   <div class="actions">
     <button id="d-edit">수정</button>
     <button id="d-delete">삭제</button>
     <button id="d-back">목록으로</button>
   </div>
+
+  <div class="comments">
+    <h3 id="comment-count">댓글</h3>
+    <div id="comment-list"></div>
+    <div class="comment-form">
+      <div class="row">
+        <input type="text" id="c-author" placeholder="작성자">
+        <input type="password" id="c-password" placeholder="비밀번호">
+      </div>
+      <textarea id="c-content" placeholder="댓글을 입력하세요" style="min-height:80px;"></textarea>
+      <button id="c-submit">댓글 등록</button>
+    </div>
+  </div>
 </section>
 
 <script>
   // 1. Apps Script 배포 후 나온 웹 앱 URL을 아래에 붙여넣으세요.
   const API_URL = 'https://script.google.com/macros/s/AKfycbyEK6x0sjL-POudD2JX3PF0W1R6HGDPr4VsG2SZ--W2NcugLJ_TS-cxPXyou87Cdpnu/exec';
+  const PAGE_SIZE = 10;
+  const MAX_IMAGE_BYTES = 2 * 1024 * 1024; // 2MB
 
   const el = (id) => document.getElementById(id);
   const status = el('status');
@@ -89,7 +135,10 @@
   const viewForm = el('view-form');
   const viewDetail = el('view-detail');
 
-  let editingId = null; // 글쓰기 화면이 '수정 모드'일 때 대상 글 ID
+  let editingId = null;
+  let detailCache = null;
+  let pendingImage = null; // { data, mimeType, filename } 선택된 새 이미지
+  let listState = { page: 1, q: '', category: '' };
 
   if (API_URL.includes('YOUR_DEPLOYED_WEB_APP_URL_HERE')) {
     warning.textContent = 'API_URL이 설정되지 않았습니다. index.html의 API_URL 값을 배포된 Apps Script URL로 바꿔주세요.';
@@ -120,6 +169,12 @@
     return d.getFullYear() + '.' + String(d.getMonth() + 1).padStart(2, '0') + '.' + String(d.getDate()).padStart(2, '0');
   }
 
+  function fmtDateTime(v) {
+    const d = new Date(v);
+    if (isNaN(d)) return '';
+    return fmtDate(v) + ' ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  }
+
   // ---- 라우팅: URL 해시로 화면 전환 (#, #write, #post/ID, #edit/ID) ----
   function route() {
     const hash = location.hash.slice(1);
@@ -137,58 +192,107 @@
   window.addEventListener('hashchange', route);
   el('home-link').onclick = () => { location.hash = ''; };
 
-  // ---- 목록 ----
+  // ---- 목록 (검색/카테고리/페이징) ----
   function loadList() {
     setStatus('불러오는 중...');
-    fetch(API_URL)
+    const params = new URLSearchParams({
+      page: listState.page,
+      pageSize: PAGE_SIZE,
+      q: listState.q,
+      category: listState.category
+    });
+    fetch(API_URL + '?' + params.toString())
       .then(res => res.json())
       .then(data => {
         setStatus('');
         if (!data.success) throw new Error(data.error);
-        renderList(data.posts);
+        renderList(data);
+        renderCategoryOptions(data.categories);
       })
       .catch(err => setStatus('오류: ' + err.message, true));
   }
 
-  function renderList(posts) {
+  function renderList(data) {
     const tbody = el('post-list');
     tbody.innerHTML = '';
-    if (posts.length === 0) {
+    if (data.posts.length === 0) {
       tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:#999;">게시글이 없습니다.</td></tr>';
-      return;
+    } else {
+      data.posts.forEach(p => {
+        const tr = document.createElement('tr');
+        const catBadge = p.Category ? '<span class="badge">' + escapeHtml(p.Category) + '</span>' : '';
+        tr.innerHTML =
+          '<td class="title">' + catBadge + escapeHtml(p.Title) + '</td>' +
+          '<td class="meta">' + escapeHtml(p.Author) + '</td>' +
+          '<td class="meta">' + escapeHtml(p.Views) + '</td>';
+        tr.querySelector('.title').onclick = () => { location.hash = 'post/' + p.ID; };
+        tbody.appendChild(tr);
+      });
     }
-    posts.forEach(p => {
-      const tr = document.createElement('tr');
-      tr.innerHTML =
-        '<td class="title">' + escapeHtml(p.Title) + '</td>' +
-        '<td class="meta">' + escapeHtml(p.Author) + '</td>' +
-        '<td class="meta">' + escapeHtml(p.Views) + '</td>';
-      tr.querySelector('.title').onclick = () => { location.hash = 'post/' + p.ID; };
-      tbody.appendChild(tr);
-    });
+
+    const totalPages = Math.max(1, Math.ceil(data.total / data.pageSize));
+    el('page-info').textContent = data.page + ' / ' + totalPages + ' 페이지 (총 ' + data.total + '건)';
+    el('page-prev').disabled = data.page <= 1;
+    el('page-next').disabled = data.page >= totalPages;
+  }
+
+  function renderCategoryOptions(categories) {
+    const select = el('filter-category');
+    const current = select.value;
+    select.innerHTML = '<option value="">전체 카테고리</option>' +
+      categories.map(c => '<option value="' + escapeHtml(c) + '">' + escapeHtml(c) + '</option>').join('');
+    select.value = current;
+
+    const datalist = el('category-options');
+    datalist.innerHTML = categories.map(c => '<option value="' + escapeHtml(c) + '">').join('');
   }
 
   el('write-btn').onclick = () => { location.hash = 'write'; };
+  el('filter-search-btn').onclick = () => {
+    listState.q = el('filter-q').value.trim();
+    listState.category = el('filter-category').value;
+    listState.page = 1;
+    loadList();
+  };
+  el('filter-q').addEventListener('keydown', (e) => { if (e.key === 'Enter') el('filter-search-btn').click(); });
+  el('filter-category').addEventListener('change', () => el('filter-search-btn').click());
+  el('page-prev').onclick = () => { if (listState.page > 1) { listState.page--; loadList(); } };
+  el('page-next').onclick = () => { listState.page++; loadList(); };
 
   // ---- 글쓰기 / 수정 ----
   function openForm(post) {
     editingId = post ? post.ID : null;
+    pendingImage = null;
     el('form-title').textContent = post ? '글 수정' : '글쓰기';
     el('f-title').value = post ? post.Title : '';
     el('f-author').value = post ? post.Author : '';
+    el('f-category').value = post ? post.Category || '' : '';
     el('f-content').value = post ? post.Content : '';
     el('f-password').value = '';
     el('f-password').placeholder = post ? '비밀번호 (수정 확인용)' : '비밀번호 (수정/삭제 시 필요)';
     el('f-submit').textContent = post ? '수정 완료' : '등록';
+    el('f-image').value = '';
+    el('f-remove-image').checked = false;
+
+    if (post && post.ImageUrl) {
+      el('f-image-current').hidden = false;
+      el('f-image-preview').src = post.ImageUrl;
+    } else {
+      el('f-image-current').hidden = true;
+    }
+
+    if (!post) {
+      // 새 글 작성 시에도 카테고리 자동완성 목록을 최신 상태로 준비
+      fetch(API_URL + '?pageSize=1').then(r => r.json()).then(d => { if (d.success) renderCategoryOptions(d.categories); }).catch(() => {});
+    }
+
     showView('form');
   }
 
-  let detailCache = null; // 방금 본 상세 글 (수정 화면 진입 시 재사용)
   function openEditFromDetailCache(id) {
     if (detailCache && detailCache.ID === id) {
       openForm(detailCache);
     } else {
-      // 상세를 거치지 않고 바로 접근한 경우, 먼저 상세를 불러온다.
       fetch(API_URL + '?id=' + encodeURIComponent(id))
         .then(res => res.json())
         .then(data => {
@@ -202,23 +306,37 @@
 
   el('f-cancel').onclick = () => { history.back(); };
 
+  el('f-image').addEventListener('change', () => {
+    const file = el('f-image').files[0];
+    pendingImage = null;
+    if (!file) return;
+    if (file.size > MAX_IMAGE_BYTES) {
+      setStatus('이미지는 2MB 이하만 업로드할 수 있습니다.', true);
+      el('f-image').value = '';
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = reader.result.split(',')[1];
+      pendingImage = { data: base64, mimeType: file.type, filename: file.name };
+    };
+    reader.readAsDataURL(file);
+  });
+
   el('f-submit').onclick = () => {
     const title = el('f-title').value.trim();
     const author = el('f-author').value.trim();
     const password = el('f-password').value;
     const content = el('f-content').value;
+    const category = el('f-category').value.trim();
 
     if (!title) { setStatus('제목을 입력하세요.', true); return; }
     if (!password) { setStatus('비밀번호를 입력하세요.', true); return; }
 
     const payload = editingId
-      ? { action: 'update', id: editingId, title, content, password }
-      : { action: 'create', title, content, author: author || '익명', password };
-
-    if (!editingId && !author) {
-      // 작성자 미입력 시 '익명' 처리 안내
-      setStatus('작성자를 입력하지 않아 "익명"으로 등록됩니다.');
-    }
+      ? { action: 'update', id: editingId, title, content, category, password,
+          image: pendingImage, removeImage: el('f-remove-image').checked }
+      : { action: 'create', title, content, category, author: author || '익명', password, image: pendingImage };
 
     postAction(payload).then((data) => {
       const targetId = editingId || data.id;
@@ -236,16 +354,27 @@
         if (!data.success) throw new Error(data.error);
         detailCache = data.post;
         renderDetail(data.post);
+        renderComments(data.comments);
         showView('detail');
       })
       .catch(err => setStatus('오류: ' + err.message, true));
   }
 
   function renderDetail(post) {
-    el('d-title').textContent = post.Title;
+    const catBadge = post.Category ? '<span class="badge">' + escapeHtml(post.Category) + '</span>' : '';
+    el('d-title').innerHTML = catBadge + escapeHtml(post.Title);
     el('d-meta').textContent =
       (post.Author || '익명') + ' · ' + fmtDate(post.CreatedAt) + ' · 조회 ' + post.Views;
     el('d-content').textContent = post.Content || '';
+
+    const img = el('d-image');
+    if (post.ImageUrl) {
+      img.src = post.ImageUrl;
+      img.hidden = false;
+    } else {
+      img.hidden = true;
+    }
+
     el('d-edit').onclick = () => { location.hash = 'edit/' + post.ID; };
     el('d-delete').onclick = () => deletePost(post.ID);
   }
@@ -257,6 +386,53 @@
     if (password === null) return;
     postAction({ action: 'delete', id, password }).then(() => {
       location.hash = '';
+    });
+  }
+
+  // ---- 댓글 ----
+  function renderComments(comments) {
+    el('comment-count').textContent = '댓글 ' + comments.length + '개';
+    const list = el('comment-list');
+    list.innerHTML = '';
+    if (comments.length === 0) {
+      list.innerHTML = '<p style="color:#999;">아직 댓글이 없습니다.</p>';
+    }
+    comments.forEach(c => {
+      const div = document.createElement('div');
+      div.className = 'comment';
+      div.innerHTML =
+        '<div class="comment-head">' +
+          '<span>' + escapeHtml(c.Author || '익명') + ' · ' + fmtDateTime(c.CreatedAt) + '</span>' +
+          '<button data-action="del-comment">삭제</button>' +
+        '</div>' +
+        '<div class="comment-body">' + escapeHtml(c.Content) + '</div>';
+      div.querySelector('[data-action="del-comment"]').onclick = () => deleteComment(c.ID);
+      list.appendChild(div);
+    });
+  }
+
+  el('c-submit').onclick = () => {
+    if (!detailCache) return;
+    const author = el('c-author').value.trim();
+    const password = el('c-password').value;
+    const content = el('c-content').value.trim();
+    if (!content) { setStatus('댓글 내용을 입력하세요.', true); return; }
+    if (!password) { setStatus('비밀번호를 입력하세요.', true); return; }
+
+    postAction({ action: 'comment-create', postId: detailCache.ID, author: author || '익명', content, password })
+      .then(() => {
+        el('c-author').value = '';
+        el('c-password').value = '';
+        el('c-content').value = '';
+        openDetail(detailCache.ID);
+      });
+  };
+
+  function deleteComment(id) {
+    const password = prompt('댓글을 삭제하려면 비밀번호를 입력하세요.');
+    if (password === null) return;
+    postAction({ action: 'comment-delete', id, password }).then(() => {
+      openDetail(detailCache.ID);
     });
   }
 
